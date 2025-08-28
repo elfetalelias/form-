@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Créateur de Facture</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#cbd5e1; --text:#e5e7eb; --accent:#22c55e; --danger:#ef4444; --line:#1f2937; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:linear-gradient(180deg,#0b1220,#0f172a); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    .wrap { max-width: 980px; margin: 40px auto; padding: 0 16px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:24px; box-shadow: 0 10px 24px rgba(0,0,0,.25); }
+    h1 { margin:0 0 8px; font-size:28px; }
+    p.lead { color:var(--muted); margin:0 0 20px; }
+    .grid { display:grid; grid-template-columns: repeat(12,1fr); gap:14px; }
+    .col-6 { grid-column: span 6; } .col-12 { grid-column: span 12; }
+    label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+    input, textarea, select { width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:#0b1220; color:var(--text); outline:none; }
+    textarea { min-height:100px; resize:vertical; }
+    .items { margin-top:8px; }
+    .item-row { display:grid; grid-template-columns: 6fr 2fr 2fr 1fr; gap:10px; align-items:end; margin-bottom:10px; }
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:10px; border:1px solid var(--line); background:#0b1220; color:var(--text); cursor:pointer; }
+    .btn:hover { filter: brightness(1.1); }
+    .btn-primary { background:var(--accent); color:#04130a; border-color:transparent; font-weight:600; }
+    .btn-danger { background:#1a0d10; border-color:#3b0f17; color:#ffd5db; }
+    .row-actions { display:flex; gap:8px; }
+    .bar { display:flex; justify-content:space-between; align-items:center; margin-top:18px; }
+    .note { color:var(--muted); font-size:12px; }
+    .toast { position:fixed; top:16px; right:16px; background:#0b1220; border:1px solid var(--line); padding:12px 14px; border-radius:10px; display:none; }
+    .err { color:#fecaca; }
+    @media (max-width: 800px){ .col-6 { grid-column: span 12;} .item-row { grid-template-columns: 1fr 1fr 1fr auto; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Créateur de Facture</h1>
+      <p class="lead">Remplissez le formulaire puis envoyez vers votre workflow n8n.</p>
+
+      <form id="invoiceForm">
+        <div class="grid">
+          <div class="col-6">
+            <h3>Entreprise</h3>
+            <label>Nom</label><input required name="company_name" />
+            <label>Adresse</label><input name="company_address" />
+          </div>
+          <div class="col-6">
+            <h3>Client</h3>
+            <label>Nom</label><input required name="customer_name" />
+            <label>Email</label><input required type="email" name="customer_email" />
+            <label>Adresse</label><input name="customer_address" />
+          </div>
+
+          <div class="col-12">
+            <h3>Articles</h3>
+            <div id="items" class="items"></div>
+            <div class="row-actions">
+              <button type="button" class="btn" id="addItem">+ Ajouter une ligne</button>
+            </div>
+          </div>
+
+          <div class="col-6">
+            <label>Taux TVA</label>
+            <input type="number" step="0.001" name="tva_rate" value="0.2" />
+          </div>
+          <div class="col-6" style="display:flex; align-items:flex-end; gap:10px;">
+            <input id="paid" type="checkbox" name="paid_immediately" />
+            <label for="paid">Payé immédiatement</label>
+          </div>
+
+          <div class="col-12">
+            <label>Description (designation globale)</label>
+            <textarea name="description" placeholder="Création de site web, hébergement, etc."></textarea>
+          </div>
+        </div>
+
+        <div class="bar">
+          <span class="note">Astuce: les lignes seront totalisées côté n8n.</span>
+          <button class="btn btn-primary" type="submit">Envoyer à n8n</button>
+        </div>
+        <div id="error" class="err" style="margin-top:10px;"></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // -------------- CONFIG: put your n8n webhook URL here --------------
+    // During testing (workflow not active) use /webhook-test/invoice/create
+    // After activation use /webhook/invoice/create
+    const N8N_WEBHOOK_URL = "http://localhost:5678/webhook-test/invoice/create";
+
+    // -------------- Items handling --------------
+    const itemsEl = document.getElementById('items');
+    const addBtn = document.getElementById('addItem');
+    function addRow(data = {desc:"", qty:1, price:0}) {
+      const row = document.createElement('div');
+      row.className = 'item-row';
+      row.innerHTML = `
+        <div>
+          <label>Désignation</label>
+          <input required name="desc" value="${data.desc}" />
+        </div>
+        <div>
+          <label>Qté</label>
+          <input required type="number" min="0" step="1" name="qty" value="${data.qty}" />
+        </div>
+        <div>
+          <label>Prix</label>
+          <input required type="number" min="0" step="0.01" name="price" value="${data.price}" />
+        </div>
+        <div style="display:flex; align-items:end;">
+          <button type="button" class="btn btn-danger remove">X</button>
+        </div>`;
+      row.querySelector('.remove').addEventListener('click', () => row.remove());
+      itemsEl.appendChild(row);
+    }
+    addBtn.addEventListener('click', () => addRow());
+    // start with one line
+    addRow({desc:"Création de site web", qty:1, price:5000});
+
+    // -------------- Toast helpers --------------
+    const toast = document.getElementById('toast');
+    function showToast(msg, isError=false) {
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      toast.style.borderColor = isError ? '#7f1d1d' : '#1f2937';
+      setTimeout(()=> toast.style.display='none', 3000);
+    }
+
+    // -------------- Submit --------------
+    const form = document.getElementById('invoiceForm');
+    const errEl = document.getElementById('error');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errEl.textContent = '';
+
+      // gather items
+      const rows = Array.from(itemsEl.querySelectorAll('.item-row')).map(r => ({
+        desc: r.querySelector('input[name=desc]').value.trim(),
+        qty: Number(r.querySelector('input[name=qty]').value),
+        price: Number(r.querySelector('input[name=price]').value)
+      }));
+
+      if (!rows.length) {
+        errEl.textContent = "Ajoutez au moins une ligne d'article.";
+        return;
+      }
+      if (rows.some(x => !x.desc || isNaN(x.qty) || isNaN(x.price))) {
+        errEl.textContent = "Vérifiez les lignes: désignation, quantité, prix.";
+        return;
+      }
+
+      const payload = {
+        company: {
+          name: form.company_name.value.trim(),
+          address: form.company_address.value.trim()
+        },
+        customer: {
+          name: form.customer_name.value.trim(),
+          email: form.customer_email.value.trim(),
+          address: form.customer_address.value.trim()
+        },
+        items: rows,
+        tva_rate: Number(form.tva_rate.value || 0),
+        paid_immediately: form.paid_immediately.checked,
+        description: form.description.value.trim()
+      };
+
+      try {
+        const res = await fetch(N8N_WEBHOOK_URL, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(()=> ({}));
+        if (!res.ok) throw new Error(data.message || 'Erreur envoi n8n');
+        showToast(`OK: Facture ${data.invoice_no || ''} envoyée`);
+        form.reset();
+        itemsEl.innerHTML = '';
+        addRow();
+      } catch (err) {
+        console.error(err);
+        errEl.textContent = err.message || 'Erreur réseau';
+        showToast('Échec de l’envoi', true);
+      }
+    });
+  </script>
+</body>
+</html>
